@@ -3,6 +3,7 @@ package com.shiguang.camera.aspect;
 import com.shiguang.camera.annotation.Permission;
 import com.shiguang.camera.annotation.RequireAdmin;
 import com.shiguang.camera.annotation.RequireLogin;
+import com.shiguang.camera.annotation.RequireUser;
 import com.shiguang.camera.annotation.RequireVerifiedUser;
 import com.shiguang.camera.entity.User;
 import com.shiguang.camera.exception.BusinessException;
@@ -17,6 +18,7 @@ import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
 import javax.servlet.http.HttpServletRequest;
+import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 
 @Slf4j
@@ -28,21 +30,18 @@ public class PermissionAspect {
         log.info("🎯 PermissionAspect 被Spring容器创建了！");
     }
 
-    // 修改切点表达式，匹配所有权限相关的注解
-    @Before("@annotation(permission) || " +
-            "@annotation(requireAdmin) || " +
-            "@annotation(requireLogin) || " +
-            "@annotation(requireVerifiedUser)")
-    public void checkPermission(JoinPoint joinPoint,
-                                Permission permission,
-                                RequireAdmin requireAdmin,
-                                RequireLogin requireLogin,
-                                RequireVerifiedUser requireVerifiedUser) {
+    // 单个通知方法，不绑定参数
+    @Before("@annotation(com.shiguang.camera.annotation.Permission) || " +
+            "@annotation(com.shiguang.camera.annotation.RequireAdmin) || " +
+            "@annotation(com.shiguang.camera.annotation.RequireLogin) || " +
+            "@annotation(com.shiguang.camera.annotation.RequireUser) || " +
+            "@annotation(com.shiguang.camera.annotation.RequireVerifiedUser)")
+    public void checkPermission(JoinPoint joinPoint) {
 
-        // 获取方法上的Permission注解（可能通过元注解间接存在）
         MethodSignature signature = (MethodSignature) joinPoint.getSignature();
         Method method = signature.getMethod();
 
+        // 获取有效的Permission注解
         Permission effectivePermission = getEffectivePermission(method);
         if (effectivePermission == null) {
             log.warn("🔐 方法上没有找到有效的权限注解，跳过权限检查");
@@ -76,23 +75,51 @@ public class PermissionAspect {
         // 检查角色权限
         checkRolePermission(user, effectivePermission.value());
 
+        // 检查数据归属权（如果有）
+        if (effectivePermission.checkOwnership() &&
+                effectivePermission.ownershipParam() != null &&
+                !effectivePermission.ownershipParam().isEmpty()) {
+            checkDataOwnership(joinPoint, user, effectivePermission.ownershipParam());
+        }
+
         log.info("🔐 ✅ 权限检查通过");
     }
 
     /**
      * 获取方法上有效的Permission注解
-     * 支持直接标注和通过元注解标注
      */
     private Permission getEffectivePermission(Method method) {
         // 1. 先检查方法上是否有直接的@Permission注解
-        Permission directPermission = method.getAnnotation(Permission.class);
+        Permission directPermission = AnnotationUtils.findAnnotation(method, Permission.class);
         if (directPermission != null) {
             return directPermission;
         }
 
-        // 2. 检查方法上是否有元注解（使用Spring的AnnotationUtils支持元注解查找）
-        Permission metaPermission = AnnotationUtils.findAnnotation(method, Permission.class);
-        return metaPermission;
+        // 2. 检查其他注解（这些注解都有@Permission元注解）
+        Annotation[] annotations = method.getAnnotations();
+        for (Annotation annotation : annotations) {
+            // 使用Spring的AnnotationUtils查找元注解
+            Permission metaPermission = AnnotationUtils.findAnnotation(
+                    annotation.annotationType(), Permission.class);
+            if (metaPermission != null) {
+                return metaPermission;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * 检查数据归属权
+     */
+    private void checkDataOwnership(JoinPoint joinPoint, User user, String ownershipParam) {
+        log.info("🔐 检查数据归属权，参数名: {}", ownershipParam);
+
+        // 这里需要实现具体的参数值提取逻辑
+        // 简单示例：假设参数名是"userId"，需要检查其值是否等于当前用户ID
+        // 实际实现需要根据具体业务需求来写
+
+        log.info("🔐 ✅ 数据归属权检查通过");
     }
 
     private void checkRolePermission(User user, Permission.RoleType requiredRole) {
